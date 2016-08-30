@@ -19,17 +19,17 @@ public struct DataReader {
 }
 
 public extension DataReader {
-    public mutating func rangeOfNextSegmentOfData(spearatedBy data: Data) -> Range<Data.Index>? {
-        var bytes = data.bytes
-        return rangeOfNextSegmentOfData(separatedBy: &bytes)
+    public mutating func rangeOfNextSegmentOfData(spearatedBy bytes: inout [UInt8]) -> Range<Data.Index>? {
+        return rangeOfNextSegmentOfData(separatedBy: bytes)
     }
     
     public mutating func rangeOfNextSegmentOfData(separatedBy bytes: [UInt8]) -> Range<Data.Index>? {
-        var bytes = bytes
-        return rangeOfNextSegmentOfData(separatedBy: &bytes)
+        let data = Data(bytes: bytes)
+        return rangeOfNextSegmentOfData(separatedBy: data)
     }
-    public mutating func rangeOfNextSegmentOfData(separatedBy bytes: inout [UInt8]) -> Range<Data.Index>? {
-        guard let endpoint = origin.findBytes(bytes: &bytes,
+    
+    public mutating func rangeOfNextSegmentOfData(separatedBy bytes: Data) -> Range<Data.Index>? {
+        guard let endpoint = origin.findBytes(bytes: bytes,
                                               offset: currentOffset,
                                               len: bytes.count) else {
                                                 return nil
@@ -48,7 +48,7 @@ public extension DataReader {
     }
     
     public mutating func segmentOfData(separatedBy data: Data, atIndex count: Int) -> Data? {
-        var bytes = data.bytes
+        var bytes = data.bytesCopied
         return segmentOfData(separatedBy: &bytes, atIndex: count)
     }
     
@@ -57,7 +57,7 @@ public extension DataReader {
         var i = 0
         
         repeat {
-            holder = rangeOfNextSegmentOfData(separatedBy: &bytes)
+            holder = rangeOfNextSegmentOfData(separatedBy: bytes)
             i += 1
         } while i <= count && holder != nil
 
@@ -72,17 +72,21 @@ public extension DataReader {
 public extension DataReader {
 
     public mutating func nextSegmentOfData(separatedBy data: Data) -> Data? {
-        var bytes = data.bytes
-        return nextSegmentOfData(separatedBy: &bytes)
+        if let range = rangeOfNextSegmentOfData(separatedBy: data) {
+            return origin.subdata(in: range)
+        }
+        return nil
     }
     
     public mutating func nextSegmentOfData(separatedBy bytes: [UInt8]) -> Data? {
-        var bytes = bytes
-        return nextSegmentOfData(separatedBy: &bytes)
+        if let range = rangeOfNextSegmentOfData(separatedBy: bytes) {
+            return origin.subdata(in: range)
+        }
+        return nil
     }
     
     public mutating func nextSegmentOfData(separatedBy bytes: inout [UInt8]) -> Data? {
-        if let range = rangeOfNextSegmentOfData(separatedBy: &bytes) {
+        if let range = rangeOfNextSegmentOfData(separatedBy: bytes) {
             return origin.subdata(in: range)
         }
         return nil
@@ -92,7 +96,7 @@ public extension DataReader {
 public extension DataReader {
     
     public mutating func forallSegments(separatedBy data: Data, handler: (Data) -> Bool) {
-        var bytes = data.bytes
+        var bytes = data.bytesCopied
         return forallSegments(separatedBy: &bytes, handler: handler)
     }
     
@@ -102,15 +106,15 @@ public extension DataReader {
     }
     
     public mutating func forallSegments(separatedBy bytes: inout [UInt8], handler: (Data) -> Bool) {
-        var data = nextSegmentOfData(separatedBy: &bytes)
+        var data = nextSegmentOfData(separatedBy: bytes)
         while data != nil {
             if !handler(data!) {
                 break
             }
-            data = nextSegmentOfData(separatedBy: &bytes)
+            data = nextSegmentOfData(separatedBy: bytes)
         }
     }
 
 }
-//#endif
+
 #endif

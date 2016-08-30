@@ -32,162 +32,46 @@
 
 import Foundation
 
-public class SXStreamQueue: SXQueue {
-    
-    
-    public var status: SXStatus
-    public var binded: [SXRuntimeObject] = []
-    public var server: SXServer
-
-    
-    public var socket: SXSocket
-    public var delegate: SXStreamRuntimeDelegate?
-    
-    public var recvFlag: Int32 = 0
-    public var sendFlag: Int32 = 0
-    
-    public var dataDelegate: SXRuntimeDataDelegate
-  
-    init(server: SXStreamServer, socket: SXSocket) {
-        
-        self.recvFlag = server.recvFlag
-        self.recvFlag = server.recvFlag
-        
-        self.socket = socket
-        status = .idle
-        self.server = server
-        self.dataDelegate = server
-        
-    }
-    
-    public func statusDidChange(status: SXStatus) {
-        self.status = status
-    }
-    
-    public func retrieveData(with flags: Int32 = 0) throws -> Data? {
-        let data = try self.socket.receive(size: self.socket.bufsize, flags: flags)
-        if data.isEmpty {
-            return nil
-        }
-        return data
-    }
-    
-    public func close() {
-        self.binded.removeAll()
-        self.socket.close()
-    }
-    
+public struct SXQueueHandlers<ReadType: Readable, WriteType: Writable> {
+    var dataHandler: (SXQueue<ReadType, WriteType>, Data) -> Bool
+    var errHandler: ((SXQueue<ReadType, WriteType>, Error) -> ())?
+    var willTerminateHandler: ((SXQueue<ReadType, WriteType>) -> ())?
+    var didTerminateHandler: ((SXQueue<ReadType, WriteType>) -> ())?
 }
 
-public protocol SXQueue : SXRuntimeObject , SXRuntimeController {
-    var server: SXServer {get set}
+public struct SXQueue<ReadType: Readable, WriteType: Writable> {
     
-    var binded: [SXRuntimeObject] {get set}
-    var status: SXStatus {get set}
-    var recvFlag: Int32 { get set }
-    var sendFlag: Int32 { get set }
-    var dataDelegate: SXRuntimeDataDelegate {get set}
-
-    func retrieveData(with flags: Int32) throws -> Data?
-
-    mutating func start(completion: () -> ())
-}
-
-extension SXQueue {
+    public var fd_r: ReadType
+    public var fd_w: WriteType
     
-    public var owner: SXRuntimeObject? {
-            get {
-                return server
-            } set {
-                if let s = newValue as? SXServer {
-                    server = s
-                }
-            }
-        }
+    public var status: SXStatus = .idle
+    public var handlers: SXQueueHandlers<ReadType, WriteType>
     
-    public mutating func inherit(from server: SXServer) {
-        if server.status != .running {
-            self.status = server.status
-        }
-        
-        if server.recvFlag != recvFlag {
-            recvFlag = server.recvFlag
-            self.recvFlag = recvFlag
-        }
-        
-        if self.server.sendFlag != sendFlag {
-            sendFlag = server.sendFlag
-            self.sendFlag = sendFlag
-        }
+    init(readFrom r: ReadType, writeTo w: WriteType, with handlers: SXQueueHandlers<ReadType, WriteType>) {
+        self.fd_r = r
+        self.fd_w = w
+        self.handlers = handlers
     }
     
-    public mutating func start(completion: () -> ()) {
+    public mutating func start() {
         self.status = .running
+        runloopBody()
+    }
+    
+    public mutating func terminate() {
         
-        var suspended = false;
-        var proceed = false
-
-        repeat {
-            
-            do {
-                inherit(from: self.server)
-                
-                func handleData() throws {
-                    if let data = try self.retrieveData(with: self.recvFlag) {
-                        proceed = self.dataDelegate.didReceiveData(object: self, data: data)
-                    } else {
-                        proceed = false
-                    }
+    }
+    
+    mutating func runloopBody() {
+        do {
+            if let data = try self.fd_r.read(fd_r) {
+                if !self.handlers.dataHandler(self, data) {
+                    return terminate()
                 }
-                
-                switch self.status {
-                    
-                case .running:
-                    try handleData()
-                    
-                case .resumming:
-                    self.status = .running
-                    self.statusDidChange(status: self.status)
-
-                case .suspended:
-                    if !suspended {
-                        self.statusDidChange(status: self.status)
-                    }
-                    suspended = true
-
-                    if let data = try retrieveData(with: 0) {
-                        #if swift(>=3)
-                        if (data.count == 0 || data.count == -1) { proceed = false }
-                        #else
-                        if (data.length == 0 || data.length == -1) { proceed = false }
-                        #endif
-                    } else {
-                        proceed = false
-                    }
-                
-                    switch self.status {
-                        
-                    case .shouldTerminate, .idle:
-                        proceed = false
-                        
-                    case .running, .resumming:
-                        try handleData()
-                        
-                    default:
-                        break
-                
-                    }
-                    
-                case .shouldTerminate, .idle:
-                    self.statusDidChange(status: self.status)
-                }
-                
-            } catch {
-                proceed = false
-                self.dataDelegate.didReceiveError?(object: self, err: error)
             }
-        } while (proceed)
-        
-        completion()
+        } catch {
+            self.handlers.errHandler?(self, error)
+        }
+        return self.runloopBody()
     }
 }

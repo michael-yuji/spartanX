@@ -33,10 +33,10 @@
 import Foundation
 
 extension Array {
-    init(count: Int, initalizer: (index: Int) -> Element) {
+    init(count: Int, initalizer: (_ index: Int) -> Element) {
         self = [Element]()
         for index in 0..<count {
-            self.append(initalizer(index: index))
+            self.append(initalizer(index))
         }
     }
 }
@@ -76,14 +76,11 @@ extension Strideable {
 
 #if swift(>=3)
     public extension Data {
+
         
-        var bytes: [UInt8] {
+        var bytesCopied: [UInt8] {
             var a = [UInt8](repeating: 0, count: count)
-//            #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-                self.copyBytes(to: &a, count: count)
-//            #elseif os(Linux) || os(FreeBSD)
-//                self.getBytes(&a, length: count)
-//            #endif
+            self.copyBytes(to: &a, count: count)
             return a
         }
         
@@ -91,17 +88,19 @@ extension Strideable {
             return count
         }
         
-        public func findBytes(bytes b: UnsafeMutablePointer<Void>, offset: Int = 0, len: Int) -> Int? {
+        public func findBytes(bytes b: Data, offset: Int = 0, len: Int) -> Int? {
             if offset < 0 || len < 0 || self.count == 0 || len + offset > self.count
             { return nil }
-            
             var i = 0
-        
-//            let mcmp = {memcmp(b,(self as NSData).bytes.advanced(by: offset + i), len)}
-            let mcmp = { self.withUnsafeBytes { memcmp(b, $0.advanced(by: offset + i), len) }}
+//            let mcmp = { self.withUnsafeBytes { memcmp(b, $0.advanced(by: offset + i), len) }}
             
-            
-            while (mcmp() != 0) {
+            let mcmp = self.withUnsafeBytes({ (sbytes) -> Int32 in
+                return b.withUnsafeBytes {
+                    return memcmp($0, sbytes.advanced(by: offset + i), len)
+                }
+            })
+
+            while (mcmp != 0) {
                 if i + offset == self.count {
                     break
                 }
@@ -110,7 +109,6 @@ extension Strideable {
             
             return i + offset
         }
-//        #endif
     }
     
     extension String {
@@ -133,27 +131,6 @@ extension Strideable {
         static var errno: String {
             let err = strerror(Foundation.errno)
             return String(bytes: err!, len: Int(strlen(err!)))
-//            pointer(of: &<#T##T#>)
         }
     }
-    
-    
-    public func pointer<T>(of obj: inout T) -> UnsafePointer<T> {
-        let ghost: (UnsafePointer<T>) -> UnsafePointer<T> = {$0}
-        return withUnsafePointer(&obj, {ghost($0)})
-    }
-    
-    public func mutablePointer<T>(of obj: inout T) -> UnsafeMutablePointer<T> {
-        let ghost: (UnsafeMutablePointer<T>) -> UnsafeMutablePointer<T> = {$0}
-        return withUnsafeMutablePointer(&obj, {ghost($0)})
-    }
-//    public func getpointer<T>(_ obj: inout T) -> UnsafePointer<T> {
-//        let ghost: (UnsafePointer<T>) -> UnsafePointer<T> = {$0}
-//        return withUnsafePointer(&obj, {ghost($0)})
-//    }
-//    
-//    public func getMutablePointer<T>(_ obj: inout T) -> UnsafeMutablePointer<T> {
-//        let ghost: (UnsafeMutablePointer<T>) -> UnsafeMutablePointer<T> = {$0}
-//        return withUnsafeMutablePointer(&obj, {ghost($0)})
-//    }
 #endif

@@ -31,155 +31,42 @@
 //
 
 import Foundation
+import swiftTLS
 
-public protocol SXServer : SXRuntimeObject, SXRuntimeController {
-    var maxGuest: Int { get set }
-    var socket: SXLocalSocket { get set }
-   
-    var port: in_port_t { get set }
-    var bufsize: Int { get set }
-    var backlog: Int { get set }
+public class SXRouter {
+    var socket: SXServerSocket<SXClientSocket>
+    var backlog: Int
     
-    #if swift(>=3)
-    func start(listenQueue: (() -> SXThreadingProxy), operateQueue: (() -> SXThreadingProxy))
-    #else
-    func start(listenQueue: (() -> dispatch_queue_t), operateQueue: (() -> dispatch_queue_t))
-    #endif
-}
-
-
-public class SXStreamServer: SXServer, SXRuntimeDataDelegate {
-    public var maxGuest: Int
-    public var socket: SXLocalSocket
-   
-    public var owner: AnyObject? = nil
-    public var status: SXStatus
-    public var port: in_port_t
-    public var bufsize: Int
-    public var backlog: Int
-
-    public var delegate: SXStreamServerDelegate?
-
-    public var didReceiveData: (object: SXQueue, data: Data) -> Bool
-    public var didReceiveError: ((object: SXRuntimeObject, err: Error) -> ())?
-    
-    public var recvFlag: Int32 = 0
-    public var sendFlag: Int32 = 0
-    
-    public func statusDidChange(status: SXStatus) {
-        guard let delegate = self.delegate else {return}
-        delegate.didChangeStatus?(object: self, status: status)
-    }
-    
-    public func close() {
-        self.delegate?.didKill?(server: self)
-        self.socket.close()
-    }
-    
-    public init(port: in_port_t, domain: SXSocketDomains, protocol: Int32 = 0, maxGuest: Int, backlog: Int, bufsize: Int = 16384, dataDelegate: SXRuntimeDataDelegate) throws {
-        self.status = .idle
-        self.socket = try SXLocalSocket(port: port, domain: domain, type: .stream, protocol: `protocol`, bufsize: bufsize)
-        try self.socket.bind()
-        self.port = port
+    var handlers: SXQueueHandlers<SXClientSocket, SXClientSocket>
+    public init(port: in_port_t,
+                domain: SXSocketDomains,
+                `protocol`: Int32 = 0,
+                maxGuest: Int,
+                backlog: Int,
+                bufsize: Int = 16384,
+                dataHandler: @escaping (SXQueue<SXClientSocket, SXClientSocket>, Data) -> Bool) throws {
+        
+        self.socket = try DefaultServerSocketSet.tcp_inet_inet6(domain: domain, port: port, type: .stream, protocol: `protocol`, sockConf: ClientSocketConfiguation(read: (bufsize: bufsize, flags: 0), writeFlags: 0))
         self.backlog = backlog
-        self.maxGuest = maxGuest
-        self.bufsize = bufsize
-        self.didReceiveData = dataDelegate.didReceiveData
-        self.didReceiveError = dataDelegate.didReceiveError
-    }
-    
-    public convenience init(port: in_port_t, domain: SXSocketDomains, protocol: Int32 = 0, maxGuest: Int, backlog: Int, bufsize: Int = 16384, handler: (object: SXQueue, data: Data) -> Bool) throws {
-        try self.init(port: port, domain: domain, protocol: `protocol`, maxGuest: maxGuest, backlog: backlog, bufsize: bufsize, handler: handler, errHandler: nil)
-    }
-    
-    public init(port: in_port_t, domain: SXSocketDomains, protocol: Int32 = 0, maxGuest: Int, backlog: Int, bufsize: Int = 16384, handler: (object: SXQueue, data: Data) -> Bool, errHandler: ((object: SXRuntimeObject, err: Error) -> ())? = nil) throws {
-        self.status = .idle
-        self.socket = try SXLocalSocket(port: port, domain: domain, type: .stream, protocol: `protocol`, bufsize: bufsize)
-        try self.socket.bind()
-        self.port = port
-        self.backlog = backlog
-        self.maxGuest = maxGuest
-        self.bufsize = bufsize
-        self.didReceiveData = handler
+        self.handlers = SXQueueHandlers(dataHandler: dataHandler, errHandler: nil, willTerminateHandler: nil, didTerminateHandler: nil)
+        self.start()
     }
     
     public func start() {
-        self.start(listenQueue: {
-//            #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-            return GrandCentralDispatchQueue(DispatchQueue.global())
-//            #elseif os(Linux) || os(FreeBSD)
-//            return SXThreadPool.default
-//            #endif
-            }, operateQueue: {
-//            #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-                return GrandCentralDispatchQueue(DispatchQueue.global())
-//            #elseif os(Linux) || os(FreeBSD)
-//                return SXThreadPool.default
-//            #endif
-            }
-        )
-    }
-    
-    public func start(listenQueue listeningQueue: (() -> SXThreadingProxy), operateQueue operatingQueue: (()->SXThreadingProxy)) {
-        
-        var listenQueue = listeningQueue()
-        listenQueue.execute {
+        let b = backlog
 
-            self.status = .running
-            var count = 0
+        SXThreadPool.default.execute {
             do {
-                while self.status != .shouldTerminate {
-                    
-                    try self.socket.listen(backlog: self.backlog)
-                    
-                    if self.status == .shouldTerminate {
-                        break
-                    } else if self.status == .suspended {
-                        continue
-                    }
-                    
-                    do {
-                        
-                        let socket = try self.socket.accept(bufsize: self.bufsize)
-                        if count >= self.maxGuest {
-                            count += 1
-                            continue
-                        }
-                        
-                        if let handler = self.delegate?.shouldConnect?(server: self, withSocket: socket) {
-                            if !handler {
-                                socket.close()
-                                continue
-                            }
-                        }
-                        
-                        var queue: SXStreamQueue = SXStreamQueue(server: self, socket: socket)
-                        
-                        if self.delegate != nil {
-                            transfer(lhs: &queue.delegate!, rhs: &self.delegate!)
-                        }
-                        
-                        var operateQueue = operatingQueue()
-                        operateQueue.execute {
-                            queue.start(completion: {
-                                queue.close()
-                                queue.delegate?.didDisconnect?(object: queue, withSocket: queue.socket)
-                                count -= 1
-                            })
-                        }
-                        
-                    } catch {
-                        self.didReceiveError?(object: self, err: error)
-                        continue
-                    }
+                try self.socket.listen(backlog: b)
+                let sock = try self.socket.accept(self.socket)
+                var queue = SXQueue<SXClientSocket, SXClientSocket>(readFrom: sock, writeTo: sock, with: self.handlers)
+                SXThreadPool.default.execute {
+                    queue.start()
                 }
-                
-                self.status = .idle
-                self.close()
-                self.delegate?.didKill?(server: self)
             } catch {
-                self.didReceiveError?(object: self, err: error)
+                print(error)
             }
         }
+
     }
 }
