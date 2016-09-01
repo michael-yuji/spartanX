@@ -122,6 +122,16 @@ public struct SXServerSocket : ServerSocket {
     
     public var service: SXService
     
+    internal var proceed: Bool = true
+    
+    internal var ident: Int32 {
+        get {
+            return sockfd
+        } set {
+            sockfd = newValue
+        }
+    }
+    
     public var backlog: Int
     
     internal var _accept: (_ from: SXServerSocket) throws -> ClientSocket

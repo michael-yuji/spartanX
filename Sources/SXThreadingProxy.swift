@@ -44,6 +44,11 @@ public struct GrandCentralDispatchQueue : SXThreadingProxy {
     }
 }
 
+//#if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
+//public var SXThreadingProxyDefault = GrandCentralDispatchQueue(DispatchQueue.global())
+//#else
+public var SXThreadingProxyDefault = SXThreadPool.default
+//#endif
 public class SXThreadPool : SXThreadingProxy {
     public var numberOfThreads: Int
     var threads: [SXThread]
@@ -134,7 +139,7 @@ public class SXThread {
     
     public init() {
         
-        #if os(Linux)
+        #if os(Linux) || os(OSX)
         var blk_sigs = sigset_t()
         sigemptyset(&blk_sigs)
         sigaddset(&blk_sigs, SIGUSR1)

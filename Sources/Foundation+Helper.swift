@@ -124,13 +124,15 @@ extension Strideable {
         init (bytes: UnsafeMutablePointer<UInt8>, len: size_t) {
             self = String((0..<len).map({Character(UnicodeScalar(bytes[$0]))}))
         }
+        
         init (bytes: UnsafeMutablePointer<Int8>, len: size_t) {
             self = String((0..<len).map({Character(UnicodeScalar(UInt8(bytes[$0])))}))
         }
         
         static var errno: String {
             let err = strerror(Foundation.errno)
-            return String(bytes: err!, len: Int(strlen(err!)))
+//            return String(bytes: err!, len: Int(strlen(err!)))
+            return String(cString: err!)
         }
     }
 #endif

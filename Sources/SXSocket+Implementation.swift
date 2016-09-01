@@ -78,14 +78,21 @@ public extension SXServerSocket {
     public func start(on thread: SXThreadingProxy) {
         var thread = thread
         thread.execute {
-            do {
-                try self.listenloop()
-                let client = try self.accept()
-                client.route(to: self.service, using: SXThreadPool.default)
-            } catch {
-                print(error)
+            while self.proceed {
+                do {
+                    try self.listenloop()
+                    let client = try self.accept()
+                    client.route(to: self.service, using: SXThreadingProxyDefault)
+                } catch {
+                    print(error)
+                }
             }
         }
+    }
+    
+    public mutating func done() {
+        self.proceed = false
+        close(self.sockfd)
     }
     
     private func listenloop() throws {
@@ -104,12 +111,22 @@ public extension SXServerSocket {
             let read = { (client: SXClientSocket) throws -> Data? in
                 let size = client.readBufsize
                 if let tlsc = client.tlsContext {
-                    return try tlsc.read(size: size)
+                    return try? tlsc.read(size: size)
                 } else {
+                    
                     var buffer = [UInt8](repeating: 0, count: size)
                     let flags = client.readFlags
+                    
+        
                     let len = recv(client.sockfd, &buffer, size, flags)
-                    if len == -1 {throw SXSocketError.recv(String.errno)}
+                    
+                    if len == -1 {
+                        return nil
+                    }
+                    
+                    if len == 0 {
+                        return nil
+                    }
                     return Data(bytes: buffer, count: len)
                 }
             }
@@ -169,15 +186,17 @@ public extension SXClientSocket {
     public func done() {
         self._clean?(self)
         close(self.sockfd)
+        print("Connection Done")
     }
 }
 
 public extension ClientSocket {
     public func route(to service: SXService, using thread: SXThreadingProxy) {
-        var queue = SXQueue(fd: self.sockfd, readFrom: self, writeTo: self, with: service)
-        var thread = thread
-        thread.execute {
-            queue.start()
+        if var queue = try? SXQueue(fd: self.sockfd, readFrom: self, writeTo: self, with: service) {
+            var thread = thread
+            thread.execute {
+                queue.start()
+            }
         }
     }
 }

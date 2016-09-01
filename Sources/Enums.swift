@@ -48,6 +48,10 @@ public enum SXAddrError: Error {
     case unknownDomain
 }
 
+public enum SXError: Error {
+    case duplicatedIdentInRoutingTable
+}
+
 public enum SXSocketDomains: UInt8 {
     case unspec     = 0
     case unix       = 1

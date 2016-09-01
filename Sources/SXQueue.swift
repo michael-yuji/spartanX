@@ -46,36 +46,29 @@ public struct SXQueue: __KqueueInternalRoute {
         return self.status
     }
     
-    init(fd: Int32, readFrom r: Readable, writeTo w: Writable, with SXServer: SXService) {
+    init(fd: Int32, readFrom r: Readable, writeTo w: Writable, with SXServer: SXService) throws {
         self.ident = fd
         self.fd_r = r
         self.fd_w = w
         self.service = SXServer
-        
-        UnixEventManager.default.register(&self)
+        runloopMain()
+        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
+        try UnixEventManager.default.register(&self)
+        #endif
     }
     
-    public mutating func suspend() {
-        self.status = .suspended
-    }
     
-    public mutating func resume() {
-        
-        if self.status != .suspended {
-            return
-        }
-        
-        self.status = .resumming
-    }
-    
-    public mutating func start() {
-        self.status = .running
+    public func start() {
         runloopMain()
     }
     
     public func terminate() {
+        print("Terminate")
         self.fd_r.done()
         self.fd_w.done()
+        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
+        UnixEventManager.default.unregister(ident)
+        #endif
     }
     
     public mutating func rebind(to service: SXService) {
@@ -88,12 +81,17 @@ public struct SXQueue: __KqueueInternalRoute {
                 if !self.service.dataHandler(self, data) {
                     return terminate()
                 }
+            } else {
+                return terminate()
             }
             
         } catch {
             self.service.errHandler?(self, error)
         }
-
+        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
+        return //self.runloopMain()
+        #else
         return self.runloopMain()
+        #endif
     }
 }
