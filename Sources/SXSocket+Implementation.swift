@@ -78,7 +78,13 @@ public extension SXServerSocket {
     public func start(on thread: SXThreadingProxy) {
         var thread = thread
         thread.execute {
-            
+            do {
+                try self.listenloop()
+                let client = try self.accept()
+                client.route(to: self.service, using: SXThreadPool.default)
+            } catch {
+                print(error)
+            }
         }
     }
     
@@ -164,7 +170,9 @@ public extension SXClientSocket {
         self._clean?(self)
         close(self.sockfd)
     }
-    
+}
+
+public extension ClientSocket {
     public func route(to service: SXService, using thread: SXThreadingProxy) {
         var queue = SXQueue(fd: self.sockfd, readFrom: self, writeTo: self, with: service)
         var thread = thread
