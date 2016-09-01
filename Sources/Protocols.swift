@@ -32,6 +32,43 @@
 
 import Foundation
 
-public protocol SXObject {
-    func close()
+public protocol Readable {
+    var readBufsize: size_t { get set }
+    func read() throws -> Data?
+    func done()
 }
+
+public protocol Writable {
+    func write(data: Data) throws
+    func done()
+}
+
+public protocol Addressable {
+    var address: SXSocketAddress? { get set }
+    var port: in_port_t? { get set }
+}
+
+public protocol SocketType {
+    var sockfd: Int32 { get set }
+    var domain: SXSocketDomains { get set }
+    var type: SXSocketTypes { get set }
+    var `protocol`: Int32 { get set }
+}
+
+public protocol ServerSocket : SocketType, Addressable {
+    var clientConf: ClientIOConf { get set }
+    func accept() throws -> ClientSocket
+}
+
+public protocol ClientSocket : SocketType, Readable, Writable {
+    /* storing address */
+    var address: SXSocketAddress? { get set }
+}
+
+public protocol ConnectionSocket : SocketType, Addressable, Readable, Writable {
+    var address: SXSocketAddress? { get set }
+    var port: in_port_t? { get set }
+    func connect() throws
+}
+
+

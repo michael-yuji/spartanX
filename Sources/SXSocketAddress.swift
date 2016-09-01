@@ -109,13 +109,14 @@ public enum SXSocketAddress {
         #endif
     }
     
-    public func resolveDomain() -> SXSocketDomains? {
+    public func sockdomain() -> SXSocketDomains? {
         switch self.socklen {
         case UInt32(MemoryLayout<sockaddr_in>.size):
             return .inet
         case UInt32(MemoryLayout<sockaddr_in6>.size):
             return .inet6
-            
+        case UInt32(MemoryLayout<sockaddr_un>.size):
+            return .unix
         default: return nil
         }
     }

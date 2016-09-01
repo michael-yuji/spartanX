@@ -63,3 +63,113 @@ public extension Addressable where Self : SocketType {
         }
     }
 }
+
+public extension SXServerSocket {
+    public func listen() throws {
+        if Foundation.listen(sockfd, Int32(self.backlog)) < 0 {
+            throw SXSocketError.listen(String.errno)
+        }
+    }
+    
+    public func accept() throws -> ClientSocket {
+        return try self._accept(self)
+    }
+    
+    public func start(on thread: SXThreadingProxy) {
+        var thread = thread
+        thread.execute {
+            
+        }
+    }
+    
+    private func listenloop() throws {
+        try self.listen()
+    }
+}
+
+public extension SXServerSocket {
+    public static func `default`(service: SXService,
+                                 conf: SXRouteConf,
+                                 tls: SXTLSContextInfo?,
+                                 clientConf: SXClientIOConf)
+        
+        throws -> SXServerSocket {
+            
+            let read = { (client: SXClientSocket) throws -> Data? in
+                let size = client.readBufsize
+                if let tlsc = client.tlsContext {
+                    return try tlsc.read(size: size)
+                } else {
+                    var buffer = [UInt8](repeating: 0, count: size)
+                    let flags = client.readFlags
+                    let len = recv(client.sockfd, &buffer, size, flags)
+                    if len == -1 {throw SXSocketError.recv(String.errno)}
+                    return Data(bytes: buffer, count: len)
+                }
+            }
+            
+            let write = { (client: SXClientSocket, data: Data) throws -> () in
+                if let tlsc = client.tlsContext {
+                    _ = try tlsc.write(data: data)
+                } else {
+                    if Foundation.send(client.sockfd, data.bytesCopied, data.length, client.writeFlags) == -1 {
+                        throw SXSocketError.send("send: \(String.errno)")
+                    }
+                }
+            }
+            
+            let clean: (_ client: SXClientSocket) -> () = {
+                (client: SXClientSocket) in
+                client.tlsContext?.close()
+            }
+            
+            let fns = ClientFunctions(read: read, write: write, clean: clean)
+            
+            let accept: @escaping (SXServerSocket) throws -> SXClientSocket = {
+                (server: SXServerSocket) throws -> SXClientSocket in
+                
+                var addr = sockaddr()
+                var socklen = socklen_t()
+                let fd = Foundation.accept(server.sockfd, &addr, &socklen)
+                getpeername(fd, &addr, &socklen)
+                
+                let context = try server.tlsContext?.accept(socket: fd)
+                
+                return try! SXClientSocket(fd: fd,
+                                           tls: context,
+                                           addrinfo: (addr: addr, len: socklen),
+                                           sockinfo: (type: conf.type, protocol: conf.`protocol`),
+                                           rwconfig: server.clientConf as! SXClientIOConf,
+                                           functions: fns)
+            }
+            
+            return try SXServerSocket(service: service,
+                                      conf: conf,
+                                      tls: tls,
+                                      clientConf: clientConf,
+                                      accept: accept)
+    }
+}
+
+public extension SXClientSocket {
+    public func write(data: Data) throws {
+        try self._write(self, data)
+    }
+    
+    public func read() throws -> Data? {
+        return try self._read(self)
+    }
+    
+    public func done() {
+        self._clean?(self)
+        close(self.sockfd)
+    }
+    
+    public func route(to service: SXService, using thread: SXThreadingProxy) {
+        var queue = SXQueue(fd: self.sockfd, readFrom: self, writeTo: self, with: service)
+        var thread = thread
+        thread.execute {
+            queue.start()
+        }
+    }
+}

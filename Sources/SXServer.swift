@@ -31,42 +31,21 @@
 //
 
 import Foundation
-import swiftTLS
 
-public class SXRouter {
-    var socket: SXServerSocket<SXClientSocket>
-    var backlog: Int
+public protocol SXService {
+    var dataHandler: (SXQueue, Data) -> Bool { get set }
+    var errHandler: ((SXQueue, Error) -> ())? { get set }
+    var willTerminateHandler: ((SXQueue) -> ())? { get set }
+    var didTerminateHandler: ((SXQueue) -> ())? { get set }
+}
+
+public class SXConnectionService: SXService {
+    public var dataHandler: (SXQueue, Data) -> Bool
+    public var errHandler: ((SXQueue, Error) -> ())?
+    public var willTerminateHandler: ((SXQueue) -> ())?
+    public var didTerminateHandler: ((SXQueue) -> ())?
     
-    var handlers: SXQueueHandlers<SXClientSocket, SXClientSocket>
-    public init(port: in_port_t,
-                domain: SXSocketDomains,
-                `protocol`: Int32 = 0,
-                maxGuest: Int,
-                backlog: Int,
-                bufsize: Int = 16384,
-                dataHandler: @escaping (SXQueue<SXClientSocket, SXClientSocket>, Data) -> Bool) throws {
-        
-        self.socket = try DefaultServerSocketSet.tcp_inet_inet6(domain: domain, port: port, type: .stream, protocol: `protocol`, sockConf: ClientSocketConfiguation(read: (bufsize: bufsize, flags: 0), writeFlags: 0))
-        self.backlog = backlog
-        self.handlers = SXQueueHandlers(dataHandler: dataHandler, errHandler: nil, willTerminateHandler: nil, didTerminateHandler: nil)
-        self.start()
-    }
-    
-    public func start() {
-        let b = backlog
-
-        SXThreadPool.default.execute {
-            do {
-                try self.socket.listen(backlog: b)
-                let sock = try self.socket.accept(self.socket)
-                var queue = SXQueue<SXClientSocket, SXClientSocket>(readFrom: sock, writeTo: sock, with: self.handlers)
-                SXThreadPool.default.execute {
-                    queue.start()
-                }
-            } catch {
-                print(error)
-            }
-        }
-
+    public init(handler: @escaping (SXQueue, Data) -> Bool) {
+        self.dataHandler = handler
     }
 }

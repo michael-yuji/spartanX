@@ -9,7 +9,9 @@
 import Foundation
 import Dispatch
 import CKit
+import swiftTLS
 
+/*
 #if os(Linux) || os(FreeBSD)
 public typealias DispatchQueue = dispatch_queue_t
     
@@ -23,6 +25,7 @@ extension DispatchQueue {
     }
 }
 #endif
+*/
 
 public protocol SXThreadingProxy {
     mutating func execute(block: @escaping () -> Void)
@@ -56,6 +59,39 @@ public class SXThreadPool : SXThreadingProxy {
         threads = [SXThread](count: nthreads) { _ in SXThread() }
     }
 }
+
+//typealias _kevent = kevent
+//class UnixEventManager {
+//    var queue: Int32 = kqueue()
+//    var changelist = [_kevent]()
+//    var events = [_kevent](repeating: _kevent(), count: 1024)
+//    var event_max = 1024
+//    
+//    func add<T: UnixEvent>(fd: inout T) {
+//        var event = _kevent()
+//        event.ident = UInt(fd.fd)
+//        event.filter = Int16(EVFILT_USER)
+//        event.flags = UInt16(Int(EV_ADD) | Int(EV_ENABLE))
+//        event.data = 0
+//        event.udata = UnsafeMutableRawPointer(&fd)
+//        changelist.append(event)
+//    }
+//    
+//    init() {
+//        SXThreadPool.default.execute {
+//            let n = kevent(self.queue,
+//                           &self.changelist,
+//                           Int32(self.changelist.count),
+//                           &self.events, Int32(self.event_max), nil)
+//            
+//            for i in 0 ..< Int(n) {
+//                let p = self.UnsafeMutablePointer<UnixEvent>(events[i].udata)
+////                let ue = UnsafeMutablePointer<UnixEvent>(events[i].udata).pointee
+//            }
+//        }
+//    }
+//}
+
 
 public class SXThread {
     

@@ -32,46 +32,68 @@
 
 import Foundation
 
-public struct SXQueueHandlers<ReadType: Readable, WriteType: Writable> {
-    var dataHandler: (SXQueue<ReadType, WriteType>, Data) -> Bool
-    var errHandler: ((SXQueue<ReadType, WriteType>, Error) -> ())?
-    var willTerminateHandler: ((SXQueue<ReadType, WriteType>) -> ())?
-    var didTerminateHandler: ((SXQueue<ReadType, WriteType>) -> ())?
-}
-
-public struct SXQueue<ReadType: Readable, WriteType: Writable> {
+public struct SXQueue: __KqueueInternalRoute {
     
-    public var fd_r: ReadType
-    public var fd_w: WriteType
+    public var fd_r: Readable
+    public var fd_w: Writable
     
-    public var status: SXStatus = .idle
-    public var handlers: SXQueueHandlers<ReadType, WriteType>
+    public var ident: Int32
     
-    init(readFrom r: ReadType, writeTo w: WriteType, with handlers: SXQueueHandlers<ReadType, WriteType>) {
+    internal var status: SXStatus = .idle
+    public var service: SXService
+    
+    public var currentStatus: SXStatus {
+        return self.status
+    }
+    
+    init(fd: Int32, readFrom r: Readable, writeTo w: Writable, with SXServer: SXService) {
+        self.ident = fd
         self.fd_r = r
         self.fd_w = w
-        self.handlers = handlers
+        self.service = SXServer
+        
+        UnixEventManager.default.register(&self)
+    }
+    
+    public mutating func suspend() {
+        self.status = .suspended
+    }
+    
+    public mutating func resume() {
+        
+        if self.status != .suspended {
+            return
+        }
+        
+        self.status = .resumming
     }
     
     public mutating func start() {
         self.status = .running
-        runloopBody()
+        runloopMain()
     }
     
-    public mutating func terminate() {
-        
+    public func terminate() {
+        self.fd_r.done()
+        self.fd_w.done()
     }
     
-    mutating func runloopBody() {
+    public mutating func rebind(to service: SXService) {
+        self.service = service
+    }
+    
+    func runloopMain() {
         do {
-            if let data = try self.fd_r.read(fd_r) {
-                if !self.handlers.dataHandler(self, data) {
+            if let data = try self.fd_r.read() {
+                if !self.service.dataHandler(self, data) {
                     return terminate()
                 }
             }
+            
         } catch {
-            self.handlers.errHandler?(self, error)
+            self.service.errHandler?(self, error)
         }
-        return self.runloopBody()
+
+        return self.runloopMain()
     }
 }
