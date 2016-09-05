@@ -31,6 +31,7 @@
 //
 
 import Foundation
+import CKit
 
 public protocol Readable {
     var readBufsize: size_t { get set }
@@ -71,4 +72,35 @@ public protocol ConnectionSocket : SocketType, Addressable, Readable, Writable {
     func connect() throws
 }
 
+
+public extension Addressable where Self : SocketType {
+    public func bind() throws {
+        var err: Int32 = 0
+        
+        var yes = true
+        
+        if setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, UInt32(MemoryLayout<Int32>.size)) == -1 {
+            throw SXSocketError.setSockOpt(String.errno)
+        }
+        
+        guard let address = address else {
+            throw SXSocketError.bind("address is nil")
+        }
+        
+        switch address {
+        case var .inet(addr):
+            err = Foundation.bind(sockfd, pointer(of: &addr).cast(to: sockaddr.self), socklen_t(MemoryLayout<sockaddr_in>.size))
+            
+        case var .inet6(addr):
+            err = Foundation.bind(sockfd, pointer(of: &addr).cast(to : sockaddr.self), socklen_t(MemoryLayout<sockaddr_in6>.size))
+            
+        case var .unix(addr):
+            err = Foundation.bind(sockfd, pointer(of: &addr).cast(to: sockaddr.self), socklen_t(MemoryLayout<sockaddr_un>.size))
+        }
+        
+        if err == -1 {
+            throw SXSocketError.bind(String.errno)
+        }
+    }
+}
 

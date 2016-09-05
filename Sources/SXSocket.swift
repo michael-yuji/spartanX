@@ -33,11 +33,6 @@
 import Foundation
 import swiftTLS
 
-public struct SocketInfo {
-    var sockfd: Int32
-    var address: SXSocketAddress
-}
-
 public struct ClientFunctions<ClientSocketType> {
     var read: (ClientSocketType) throws -> Data?
     var write: (ClientSocketType, _ data: Data) throws -> ()
@@ -62,117 +57,6 @@ public struct SXClientIOConf: ClientIOConf {
         self.flags_r = read.flags
         self.flags_w = writeFlags
     }
-}
-
-public struct SXRouteConf {
-    public var address: SXSocketAddress
-    public var port: in_port_t
-    
-    public var domain: SXSocketDomains {
-        return address.sockdomain()!
-    }
-    
-    public var type: SXSocketTypes
-    public var `protocol`: Int32
-    public var backlog : Int
-    
-    public init(domain: SXSocketDomains,
-                type: SXSocketTypes,
-                port: in_port_t,
-                backlog: Int = 50,
-                using `protocol`: Int32 = 0) {
-        self.address = try! SXSocketAddress(withDomain: domain, port: port)
-        self.type = type
-        self.port = port
-        self.backlog = backlog
-        self.`protocol` = `protocol`
-    }
-}
-
-public struct SXTLSContextInfo {
-    public var certificate: (path: String, passwd: String?)
-    public var privateKey: (path: String, passwd: String?)
-    public var ca: (path: String, passwd: String?)?
-    public var ca_path: String?
-
-    public init(certificate: (path: String, passwd: String?),
-                privateKey: (path: String, passwd: String?),
-                ca: (path: String, passwd: String?)? = nil,
-                ca_path: String? = nil) {
-        self.certificate = certificate
-        self.privateKey = privateKey
-        self.ca = ca
-        self.ca_path = ca_path
-    }
-}
-
-public struct SXServerSocket : ServerSocket {
-    
-    public var address: SXSocketAddress?
-    public var port: in_port_t?
-    
-    public var tlsContext: TLSServer?
-    
-    public var clientConf: ClientIOConf
-    
-    public var sockfd: Int32
-    public var domain: SXSocketDomains
-    public var type: SXSocketTypes
-    public var `protocol`: Int32
-    
-    public var service: SXService
-    
-    internal var proceed: Bool = true
-    
-    internal var ident: Int32 {
-        get {
-            return sockfd
-        } set {
-            sockfd = newValue
-        }
-    }
-    
-    public var backlog: Int
-    
-    internal var _accept: (_ from: SXServerSocket) throws -> ClientSocket
-    
-    public init(service: SXService,
-                conf: SXRouteConf,
-                tls: SXTLSContextInfo?,
-                clientConf: ClientIOConf,
-                accept: @escaping (_ from: SXServerSocket) throws -> ClientSocket) throws {
-        
-        self.service = service
-        
-        self.address = conf.address
-        self.port = conf.port
-        self.type = conf.type
-        self.clientConf = clientConf
-        self.`protocol` = conf.`protocol`
-        self.domain = conf.domain
-        self.backlog = conf.backlog
-        
-        self._accept = accept
-        
-        self.sockfd = socket(Int32(domain.rawValue), type.rawValue, `protocol`)
-        
-        if sockfd == -1 {
-            throw SXSocketError.socket(String.errno)
-        }
-        
-        if self.type == .stream {
-            try self.bind()
-        }
-        
-        if let tls = tls {
-            self.tlsContext = try TLSServer(cert: tls.certificate.path,
-                                            cert_passwd: tls.certificate.passwd,
-                                            key: tls.privateKey.path,
-                                            key_passwd: tls.privateKey.passwd)
-        }
-    }
-    
-    
 }
 
 public struct SXClientSocket : ClientSocket {
@@ -222,5 +106,21 @@ public struct SXClientSocket : ClientSocket {
         
         self._read = functions.read
         self._write = functions.write
+    }
+}
+
+public extension SXClientSocket {
+    public func write(data: Data) throws {
+        try self._write(self, data)
+    }
+    
+    public func read() throws -> Data? {
+        return try self._read(self)
+    }
+    
+    public func done() {
+        self._clean?(self)
+        close(self.sockfd)
+        print("Connection Done")
     }
 }

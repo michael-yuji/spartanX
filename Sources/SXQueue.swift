@@ -30,14 +30,16 @@
 //  Copyright © 2016 yuuji. All rights reserved.
 //
 
-import Foundation
+public protocol KqueueManagable {
+    var ident: Int32 { get set }
+    func runloopMain()
+}
 
-public struct SXQueue: __KqueueInternalRoute {
-    
-    public var fd_r: Readable
-    public var fd_w: Writable
+public class SXQueue: KqueueManagable {
     
     public var ident: Int32
+    public var fd_r: Readable
+    public var fd_w: Writable
     
     internal var status: SXStatus = .idle
     public var service: SXService
@@ -46,41 +48,27 @@ public struct SXQueue: __KqueueInternalRoute {
         return self.status
     }
     
-    init(fd: Int32, readFrom r: Readable, writeTo w: Writable, with SXServer: SXService) throws {
-        self.ident = fd
+    init(fd: Int32, readFrom r: Readable, writeTo w: Writable, with service: SXService) throws {
+        
         self.fd_r = r
         self.fd_w = w
-        self.service = SXServer
-        runloopMain()
-        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
-        try UnixEventManager.default.register(&self)
-        #endif
-    }
-    
-    
-    public func start() {
-        runloopMain()
+        self.service = service
+        self.ident = fd
+        SpartanXManager.default?.register(service: service, queue: self)
     }
     
     public func terminate() {
-        print("Terminate")
-        self.fd_r.done()
-        self.fd_w.done()
-        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
-        UnixEventManager.default.unregister(ident)
-        #endif
+        SpartanXManager.default?.unregister(for: ident)
     }
-    
-    public mutating func rebind(to service: SXService) {
-        self.service = service
-    }
-    
-    func runloopMain() {
+   
+    public func runloopMain() {
         do {
             if let data = try self.fd_r.read() {
+                
                 if !self.service.dataHandler(self, data) {
                     return terminate()
                 }
+                
             } else {
                 return terminate()
             }
@@ -88,10 +76,5 @@ public struct SXQueue: __KqueueInternalRoute {
         } catch {
             self.service.errHandler?(self, error)
         }
-        #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
-        return //self.runloopMain()
-        #else
-        return self.runloopMain()
-        #endif
     }
 }

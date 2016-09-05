@@ -11,28 +11,12 @@ import Dispatch
 import CKit
 import swiftTLS
 
-/*
-#if os(Linux) || os(FreeBSD)
-public typealias DispatchQueue = dispatch_queue_t
-    
-extension DispatchQueue {
-    public func async(execute block: () -> Void) {
-        dispatch_async(self, block)
-    }
-    
-    public static func global(_ qos: dispatch_queue_priority_t = DISPATCH_QUEUE_PRIORITY_DEFAULT) -> DispatchQueue {
-        return dispatch_get_global_queue(qos, 0)
-    }
-}
-#endif
-*/
-
 public protocol SXThreadingProxy {
     mutating func execute(block: @escaping () -> Void)
 }
 
 public struct GrandCentralDispatchQueue : SXThreadingProxy {
-
+    
     public var queue: DispatchQueue
     
     public init(_ queue: DispatchQueue) {
@@ -65,39 +49,6 @@ public class SXThreadPool : SXThreadingProxy {
     }
 }
 
-//typealias _kevent = kevent
-//class UnixEventManager {
-//    var queue: Int32 = kqueue()
-//    var changelist = [_kevent]()
-//    var events = [_kevent](repeating: _kevent(), count: 1024)
-//    var event_max = 1024
-//    
-//    func add<T: UnixEvent>(fd: inout T) {
-//        var event = _kevent()
-//        event.ident = UInt(fd.fd)
-//        event.filter = Int16(EVFILT_USER)
-//        event.flags = UInt16(Int(EV_ADD) | Int(EV_ENABLE))
-//        event.data = 0
-//        event.udata = UnsafeMutableRawPointer(&fd)
-//        changelist.append(event)
-//    }
-//    
-//    init() {
-//        SXThreadPool.default.execute {
-//            let n = kevent(self.queue,
-//                           &self.changelist,
-//                           Int32(self.changelist.count),
-//                           &self.events, Int32(self.event_max), nil)
-//            
-//            for i in 0 ..< Int(n) {
-//                let p = self.UnsafeMutablePointer<UnixEvent>(events[i].udata)
-////                let ue = UnsafeMutablePointer<UnixEvent>(events[i].udata).pointee
-//            }
-//        }
-//    }
-//}
-
-
 public class SXThread {
     
     class BlockQueue {
@@ -105,6 +56,8 @@ public class SXThread {
         var count: Int = 0
         var mutex: pthread_mutex_t = pthread_mutex_t()
         var blocks = [() -> Void]()
+        
+        var idleHandler: (() -> Void)?
         
         var mutexPointer: UnsafeMutablePointer<pthread_mutex_t> {
             return mutablePointer(of: &mutex)
@@ -129,9 +82,9 @@ public class SXThread {
         queue.count += 1
         if queue.blocks.count == 1 {
             #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-            pthread_kill(thread!, SIGUSR1)
+                pthread_kill(thread!, SIGUSR1)
             #else
-            pthread_kill(thread, SIGUSR1)
+                pthread_kill(thread, SIGUSR1)
             #endif
         }
         pthread_mutex_unlock(queue.mutexPointer)
@@ -140,18 +93,18 @@ public class SXThread {
     public init() {
         
         #if os(Linux) || os(OSX)
-        var blk_sigs = sigset_t()
-        sigemptyset(&blk_sigs)
-        sigaddset(&blk_sigs, SIGUSR1)
-        pthread_sigmask(SIG_BLOCK, &blk_sigs, nil)
+            var blk_sigs = sigset_t()
+            sigemptyset(&blk_sigs)
+            sigaddset(&blk_sigs, SIGUSR1)
+            pthread_sigmask(SIG_BLOCK, &blk_sigs, nil)
         #endif
         
         pthread_create(&thread, nil, { (pointer) -> UnsafeMutableRawPointer? in
             
             #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-            let blockQueue = pointer.cast(to: BlockQueue.self).pointee
+                let blockQueue = pointer.cast(to: BlockQueue.self).pointee
             #else
-            let blockQueue = pointer!.cast(to: BlockQueue.self).pointee
+                let blockQueue = pointer!.cast(to: BlockQueue.self).pointee
             #endif
             
             var signals = sigset_t()
@@ -166,8 +119,13 @@ public class SXThread {
                     _ = blockQueue.blocks.removeFirst()
                     blockQueue.count -= 1
                     pthread_mutex_unlock(blockQueue.mutexPointer)
+                    
+                    if blockQueue.blocks.isEmpty {
+                        blockQueue.idleHandler?()
+                    }
                 }
-            sigwait(&signals, &caught)
+                sigwait(&signals, &caught)
+                
             }
             
         }, UnsafeMutableRawPointer(mutablePointer(of: &self.queue)))

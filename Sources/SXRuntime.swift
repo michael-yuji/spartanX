@@ -46,145 +46,164 @@ protocol __KqueueInternalRoute {
     func runloopMain()
 }
 
+public extension Array {
+    subscript(_ i: Int32) -> Element {
+        return self[Int(i)]
+    }
+}
+
+internal struct __sxqueue_wrap {
+    var q: KqueueManagable
+    init(_ q: KqueueManagable) { self.q = q }
+}
+
 #if os(OSX) || os(FreeBSD) || os(iOS) || os(watchOS) || os(tvOS)
+typealias _kevent = Foundation.kevent
 
-private struct __KqueueInternalInfo {
-    var __pointer: UnsafeMutableRawPointer
-    var __exec: () -> ()
-    var bytes: Int
-    var alignment: Int
-    init<T: __KqueueInternalRoute>(_ x: inout T) {
-        self.__pointer = UnsafeMutableRawPointer(&x)
-        self.__exec = x.runloopMain
-        self.bytes = MemoryLayout<T>.size
-        self.alignment = MemoryLayout<T>.alignment
+public struct SpartanXManager {
+    
+    public static var `default`: SpartanXManager?
+    
+    public static func initializeDefault() {
+        `default` = SpartanXManager(maxCPU: Sysconf.cpusConfigured / 2, evs_cpu: 5120)
     }
     
-    init<T: __KqueueInternalRoute>(_ x: UnsafeMutablePointer<T>) {
-        self.__pointer = UnsafeMutableRawPointer(x)
-        self.__exec = x.pointee.runloopMain
-        self.bytes = MemoryLayout<T>.size
-        self.alignment = MemoryLayout<T>.alignment
+    var kernels = [SXKernel]()
+    
+    var map = [Int32 : SXKernel]()
+    
+    mutating func register(service: SXService, queue: SXQueue) {
+        
+        let queue = __sxqueue_wrap(queue)
+        let _leastBusyKernel = leastBusyKernel()
+        
+        map[queue.q.ident] = _leastBusyKernel
+        _leastBusyKernel?.register(queue: queue)
+        
+    }
+    
+    mutating func register(for socket: SXServerSocket) {
+        
+        let queue = __sxqueue_wrap(socket)
+        let _leastBusyKernel = leastBusyKernel()
+        
+        map[socket.sockfd] = _leastBusyKernel
+        _leastBusyKernel?.register(queue: queue)
+        
+    }
+    
+    func leastBusyKernel() -> SXKernel? {
+        return kernels.sorted {
+            $0.queues.count < $1.queues.count
+            }.first
+    }
+    
+    mutating func unregister(for ident: Int32) {
+        let kernel = map[ident]
+        kernel?.remove(ident: ident)
+        map[ident] = nil
+    }
+    
+    init(maxCPU: Int, evs_cpu: Int) {
+        self.kernels = [SXKernel](count: maxCPU) {_ in
+            return SXKernel(events_count: evs_cpu)
+        }
     }
 }
 
-
-typealias _kevent = kevent
-class UnixEventManager {
-    var queue: Int32 = kqueue()
-    var changelist = [_kevent]()
-    var events = [_kevent]()
-    var event_max = 1024
+public class SXKernel {
     
-    static var `default` = UnixEventManager()
-    private var eva = 0
+    public var thread: SXThread
+    var mutex: pthread_mutex_t
+    var kq: Int32
     
-    private var routeingTable = [Int32: __KqueueInternalInfo]()
+    // change list and eventlist
+    var events: [_kevent]
+    var changes: [_kevent]
     
-    func register<T: __KqueueInternalRoute>(_ item: inout T) throws {
-        let item_ptr = UnsafeMutableRawPointer(UnsafeMutableRawPointer.allocate(bytes: MemoryLayout<T>.size,
-                                                        alignedTo: MemoryLayout<T>.alignment).initializeMemory(as: T.self, to: item))
+    // user queues
+    var queues: [Int32: KqueueManagable]
+    
+    // changes count
+    var count = 0
+    
+    // active events count
+    var actived = false
+    
+    init(events_count: Int) {
+        thread = SXThread()
+        mutex = pthread_mutex_t()
+        kq = kqueue()
+        self.queues = [:]
+        self.events = [_kevent](repeating: _kevent(), count: events_count)
+        self.changes = [_kevent]()
+        pthread_mutex_init(&mutex, nil)
         
-        guard self.routeingTable[item.ident] == nil else {
-            throw SXError.duplicatedIdentInRoutingTable
+    }
+    
+    func active() {
+        actived = true
+        self.thread.execute {
+            while true {
+                let nev = kevent(self.kq, self.changes, Int32(self.changes.count), &self.events, Int32(self.events.count), nil)
+                
+                if nev == 0 {
+                    break
+                }
+                
+                self.changes.removeAll(keepingCapacity: true)
+                for i in 0..<Int(nev) {
+                    print(self.queues)
+                    let queue = self.queues[Int32(self.events[Int(i)].ident)]
+                    queue!.runloopMain()
+                }
+            }
+            self.actived = false
         }
-        
-        self.pendings.append ({
+    }
+    
+}
+
+
+// Kevent
+extension SXKernel {
+    func register(queue: __sxqueue_wrap) {
+        if !actived {
+            active()
+        }
+        withMutex {
+            self.queues[queue.q.ident] = queue.q
             
-            var event = _kevent()
-            print(item_ptr)
-            event.ident = UInt(item_ptr.assumingMemoryBound(to: T.self).pointee.ident)
-            event.filter = Int16(EVFILT_READ)
-            event.flags = UInt16(Int(EV_ADD) | Int(EV_ENABLE))
-            event.data = 0
-            event.udata = item_ptr
-            self.changelist.append(event)
-            self.routeingTable[item_ptr.assumingMemoryBound(to: T.self).pointee.ident] = __KqueueInternalInfo(item_ptr.assumingMemoryBound(to: T.self))
-        })
-    }
-    
-    func ignore<T: __KqueueInternalRoute>(_ item: inout T) {
-        let item_ptr = UnsafeMutableRawPointer(&item)
-        self.pendings.append {
-            var event = _kevent()
-            event.ident = UInt(item_ptr.assumingMemoryBound(to: T.self).pointee.ident)
-            event.filter = Int16(EVFILT_READ)
-            event.flags = UInt16(Int(EV_DISABLE))
-            event.data = 0
-            event.udata = item_ptr
-            self.changelist.append(event)
+            let k = _kevent(ident: UInt(queue.q.ident),
+                            filter: Int16(EVFILT_READ),
+                            flags: UInt16(EV_ADD | EV_ENABLE),
+                            fflags: 0, data: 0,
+                            udata: nil)
+            
+            changes.append(k);
         }
     }
     
-    func unregister(_ ident: Int32) {
-        if let info = self.routeingTable[ident] {
-            info.__pointer.deallocate(bytes: info.bytes, alignedTo: info.alignment)
-            self.pendings.append {
-                var event = _kevent()
-                event.ident = UInt(ident)
-                event.filter = Int16(EVFILT_READ)
-                event.flags = UInt16(Int(EV_DELETE | EV_DISABLE))
-                event.data = 0
-                event.udata = nil
-                self.changelist.append(event)
-                self.routeingTable[ident] = nil
-            }
-        }
-    }
-    
-    var pendings = [() -> ()]()
-
-    init() {
-        self.events.reserveCapacity(1024)
-        SXThreadingProxyDefault.execute {
-            while (true) {
-                print("KEVENT INIT")
-                
-                print(self.pendings)
-                
-//                for pending in self.pendings {
-//                    pending()
-//                }
-//
-//                print(self.changelist.count)
-//                print(self.events.count)
-//                
-                while !self.pendings.isEmpty {
-                    self.pendings.removeFirst()()
-                }
-                
-                if self.changelist.count == 0 && self.events.count == 0 {
-                    sleep(1)
-                    continue
-                }
-//
-                var timeout = timespec(tv_sec: 10, tv_nsec: 0)
-                
-                let n = kevent(self.queue,
-                               &self.changelist,
-                               Int32(self.changelist.count),
-                               &self.events, Int32(self.event_max), nil)
-                
-                
-                print("kevent")
-                
-                for event in self.events {
-                    self.routeingTable[Int32(event.ident)]?.__exec()
-                }
-            }
+    func remove(ident: Int32) {
+        withMutex {
+            self.queues[ident] = nil
+            let k = _kevent(ident: UInt(ident),
+                            filter: Int16(EVFILT_READ),
+                            flags: UInt16(EV_DELETE),
+                            fflags: 0,
+                            data: 0,
+                            udata: nil)
+            changes.append(k)
         }
     }
 }
 
+// Helper
+extension SXKernel {
+    func withMutex(_ execute: () -> ()) {
+        pthread_mutex_lock(&mutex)
+        execute()
+        pthread_mutex_unlock(&mutex)
+    }
+}
 #endif
-
-
-public protocol SXRuntimeObject {
-    
-    var status: SXStatus { get }
-
-    func statusDidChange(status: SXStatus)
-    
-    func close()
-}
-
