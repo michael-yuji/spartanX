@@ -33,22 +33,6 @@
 import Foundation
 import CKit
 
-public protocol Readable {
-    var readBufsize: size_t { get set }
-    func read() throws -> Data?
-    func done()
-}
-
-public protocol Writable {
-    func write(data: Data) throws
-    func done()
-}
-
-public protocol Addressable {
-    var address: SXSocketAddress? { get set }
-    var port: in_port_t? { get set }
-}
-
 public protocol SocketType {
     var sockfd: Int32 { get set }
     var domain: SXSocketDomains { get set }
@@ -72,6 +56,21 @@ public protocol ConnectionSocket : SocketType, Addressable, Readable, Writable {
     func connect() throws
 }
 
+public protocol Readable {
+    var readBufsize: size_t { get set }
+    func read() throws -> Data?
+    func done()
+}
+
+public protocol Writable {
+    func write(data: Data) throws
+    func done()
+}
+
+public protocol Addressable {
+    var address: SXSocketAddress? { get set }
+    var port: in_port_t? { get set }
+}
 
 public extension Addressable where Self : SocketType {
     public func bind() throws {

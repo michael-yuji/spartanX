@@ -121,6 +121,5 @@ public extension SXClientSocket {
     public func done() {
         self._clean?(self)
         close(self.sockfd)
-        print("Connection Done")
     }
 }

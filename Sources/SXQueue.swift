@@ -30,11 +30,6 @@
 //  Copyright © 2016 yuuji. All rights reserved.
 //
 
-public protocol KqueueManagable {
-    var ident: Int32 { get set }
-    func runloopMain()
-}
-
 public class SXQueue: KqueueManagable {
     
     public var ident: Int32
@@ -58,10 +53,12 @@ public class SXQueue: KqueueManagable {
     }
     
     public func terminate() {
+        self.fd_r.done()
+        self.fd_w.done()
         SpartanXManager.default?.unregister(for: ident)
     }
    
-    public func runloopMain() {
+    public func runloop() {
         do {
             if let data = try self.fd_r.read() {
                 

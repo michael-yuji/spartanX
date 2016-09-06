@@ -50,7 +50,6 @@ private func combine(strings: [String]) -> String {
 }
 
 extension String {
-    
     public static func alignedText(strings: String..., spaces: [Int]) -> String {
         let astr = strings.enumerated().map { (index, string) -> String in
             var temp = string

@@ -1,20 +1,60 @@
+
+//  Copyright (c) 2016, Yuji
+//  All rights reserved.
 //
-//  SXThreadingProxy.swift
-//  spartanX
+//  Redistribution and use in source and binary forms, with or without
+//  modification, are permitted provided that the following conditions are met:
+//
+//  1. Redistributions of source code must retain the above copyright notice, this
+//  list of conditions and the following disclaimer.
+//  2. Redistributions in binary form must reproduce the above copyright notice,
+//  this list of conditions and the following disclaimer in the documentation
+//  and/or other materials provided with the distribution.
+//
+//  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+//  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+//  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+//  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+//  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+//  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+//  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+//  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+//  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
+//  The views and conclusions contained in the software and documentation are those
+//  of the authors and should not be interpreted as representing official policies,
+//  either expressed or implied, of the FreeBSD Project.
 //
 //  Created by yuuji on 7/8/16.
-//
+//  Copyright © 2016 yuuji. All rights reserved.
 //
 
-import Foundation
-import Dispatch
-import CKit
-import swiftTLS
+import XThreads
+
+public typealias SXThread = XThread
+public typealias SXThreadPool = XThreadPool
 
 public protocol SXThreadingProxy {
     mutating func execute(block: @escaping () -> Void)
 }
 
+extension SXThreadPool : SXThreadingProxy {
+    public func execute(block: @escaping () -> Void) {
+        self.exec(block: block)
+    }
+    public static var `default` = SXThreadPool()
+}
+
+extension SXThread : SXThreadingProxy {
+    public func execute(block: @escaping () -> Void) {
+        self.exec(block: block)
+    }
+}
+
+#if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
+import Dispatch
+    
 public struct GrandCentralDispatchQueue : SXThreadingProxy {
     
     public var queue: DispatchQueue
@@ -27,107 +67,11 @@ public struct GrandCentralDispatchQueue : SXThreadingProxy {
         queue.async(execute: block)
     }
 }
+#endif
 
-//#if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-//public var SXThreadingProxyDefault = GrandCentralDispatchQueue(DispatchQueue.global())
-//#else
+
+#if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
+public var SXThreadingProxyDefault = GrandCentralDispatchQueue(DispatchQueue.global())
+#else
 public var SXThreadingProxyDefault = SXThreadPool.default
-//#endif
-public class SXThreadPool : SXThreadingProxy {
-    public var numberOfThreads: Int
-    var threads: [SXThread]
-    
-    public static let `default` = SXThreadPool(nthreads: 550)
-    
-    public func execute(block: @escaping ()->Void) {
-        threads.sorted{ $0.queue.count < $1.queue.count }.first!.execute(block: block)
-    }
-    
-    public init(nthreads: Int) {
-        numberOfThreads = nthreads
-        threads = [SXThread](count: nthreads) { _ in SXThread() }
-    }
-}
-
-public class SXThread {
-    
-    class BlockQueue {
-        
-        var count: Int = 0
-        var mutex: pthread_mutex_t = pthread_mutex_t()
-        var blocks = [() -> Void]()
-        
-        var idleHandler: (() -> Void)?
-        
-        var mutexPointer: UnsafeMutablePointer<pthread_mutex_t> {
-            return mutablePointer(of: &mutex)
-        }
-        
-        init() {
-            pthread_mutex_init(&mutex, nil)
-        }
-    }
-    
-    #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-    var thread: pthread_t?
-    #elseif os(Linux) || os(FreeBSD)
-    var thread: pthread_t = pthread_t()
-    #endif
-    
-    var queue = BlockQueue()
-    
-    public func execute(block: @escaping () -> Void) {
-        pthread_mutex_lock(queue.mutexPointer)
-        queue.blocks.append(block)
-        queue.count += 1
-        if queue.blocks.count == 1 {
-            #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-                pthread_kill(thread!, SIGUSR1)
-            #else
-                pthread_kill(thread, SIGUSR1)
-            #endif
-        }
-        pthread_mutex_unlock(queue.mutexPointer)
-    }
-    
-    public init() {
-        
-        #if os(Linux) || os(OSX)
-            var blk_sigs = sigset_t()
-            sigemptyset(&blk_sigs)
-            sigaddset(&blk_sigs, SIGUSR1)
-            pthread_sigmask(SIG_BLOCK, &blk_sigs, nil)
-        #endif
-        
-        pthread_create(&thread, nil, { (pointer) -> UnsafeMutableRawPointer? in
-            
-            #if os(OSX) || os(iOS) || os(watchOS) || os(tvOS)
-                let blockQueue = pointer.cast(to: BlockQueue.self).pointee
-            #else
-                let blockQueue = pointer!.cast(to: BlockQueue.self).pointee
-            #endif
-            
-            var signals = sigset_t()
-            var caught: Int32 = 0
-            sigemptyset(&signals)
-            sigaddset(&signals, SIGUSR1)
-            
-            while true {
-                while blockQueue.count > 0 {
-                    blockQueue.blocks.first!()
-                    pthread_mutex_lock(blockQueue.mutexPointer)
-                    _ = blockQueue.blocks.removeFirst()
-                    blockQueue.count -= 1
-                    pthread_mutex_unlock(blockQueue.mutexPointer)
-                    
-                    if blockQueue.blocks.isEmpty {
-                        blockQueue.idleHandler?()
-                    }
-                }
-                sigwait(&signals, &caught)
-                
-            }
-            
-        }, UnsafeMutableRawPointer(mutablePointer(of: &self.queue)))
-    }
-}
+#endif

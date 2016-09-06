@@ -284,6 +284,10 @@ public enum SXSocketAddress {
             freeaddrinfo(info)
         }
         
+        defer {
+            clean()
+        }
+        
         cinfo = info
         
         while cinfo != nil {
@@ -309,8 +313,6 @@ public enum SXSocketAddress {
                 continue;
             }
         }
-        
-        clean()
         
         return ret
     }
