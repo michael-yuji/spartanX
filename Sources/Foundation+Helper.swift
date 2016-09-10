@@ -88,18 +88,24 @@ extension Strideable {
         }
         
         public func findBytes(bytes b: Data, offset: Int = 0, len: Int) -> Int? {
-            if offset < 0 || len < 0 || self.count == 0 || len + offset > self.count
-            { return nil }
-            var i = 0
-//            let mcmp = { self.withUnsafeBytes { memcmp(b, $0.advanced(by: offset + i), len) }}
             
-            let mcmp = self.withUnsafeBytes({ (sbytes) -> Int32 in
-                return b.withUnsafeBytes {
-                    return memcmp($0, sbytes.advanced(by: offset + i), len)
-                }
-            })
+            
+            
+            if offset < 0 || len < 0 || self.count == 0 || len + offset > self.count
+            {
+                return nil
+            }
+            
+            var i = 0
 
-            while (mcmp != 0) {
+
+            let mcmp = {
+                self.withUnsafeBytes {
+                    memcmp((b as NSData).bytes, $0.advanced(by: offset + i), len)
+                }
+            }
+
+            while (mcmp() != 0) {
                 if i + offset == self.count {
                     break
                 }

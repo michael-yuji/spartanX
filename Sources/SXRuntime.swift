@@ -43,12 +43,7 @@ public enum SXStatus {
 
 public protocol KqueueManagable {
     var ident: Int32 { get set }
-    func runloop()
-}
-
-protocol __KqueueInternalRoute {
-    var ident: Int32 { get set }
-    func runloop()
+    func runloop(kdata: Int, udata: UnsafeRawPointer!)
 }
 
 public extension Array {
@@ -74,7 +69,7 @@ internal struct __sxqueue_wrap {
     public extension SpartanXManager {
         
         public static func initializeDefault() {
-            `default` = SpartanXManager(maxCPU: Sysconf.cpusConfigured / 2, evs_cpu: 5120)
+            `default` = SpartanXManager(maxCPU: 3, evs_cpu: 5120)
         }
         
         internal mutating func register(service: SXService, queue: SXQueue) {
@@ -129,7 +124,7 @@ internal struct __sxqueue_wrap {
         // user queues
         var queues: [Int32: KqueueManagable]
         
-        // changes count
+        // events count
         var count = 0
         
         // active events count
@@ -159,30 +154,46 @@ internal struct __sxqueue_wrap {
             
             self.thread.execute {
                 
-                while true {
+                kqueue_loop: while true {
                     
-                    self.withMutex {
+                    if (self.withMutex { () -> Bool in
+                        
                         if self.changes.count != 0 {
+                            
                             kevent(self.kq, self.changes, Int32(self.changes.count), nil, 0, nil)
+                            self.changes.removeAll(keepingCapacity: true)
                         }
+                        
+                        if self.count == 0 {
+                            return true
+                        }
+                        return false
+                        }) {
+            
+                        break kqueue_loop
                     }
+                    
+                    
                     
                     let nev = kevent(self.kq, nil, 0, &self.events, Int32(self.events.count), nil)
                     
-                    if nev < 0 {
-                        continue
-                    }
                     
-                    if nev == 0 {
+                    switch nev {
+                    case 0:
+                        break kqueue_loop
+                    case 1..<Int32.max:
+                        continue kqueue_loop
+                    default:
                         break
                     }
-                    
+
                     for i in 0..<Int(nev) {
-                        let queue = self.queues[Int32(self.events[Int(i)].ident)]
-                        SXThreadingProxyDefault.execute {
-                            queue?.runloop()
-                        }
+                        let event = self.events[Int(i)]
+                        
+                        let queue = self.queues[Int32(event.ident)]
+                        queue?.runloop(kdata: event.data, udata: event.udata)
                     }
+
                 }
                 
                 self.withMutex {
@@ -200,11 +211,13 @@ internal struct __sxqueue_wrap {
                                 flags: UInt16(EV_ADD | EV_ENABLE | EV_RECEIPT),
                                 fflags: 0, data: 0,
                                 udata: nil)
+                count += 1
                 
                 changes.append(k);
             }
             
             if !actived {
+                
                 activate()
             }
         }
@@ -214,10 +227,12 @@ internal struct __sxqueue_wrap {
                 self.queues[ident] = nil
                 let k = _kevent(ident: UInt(ident),
                                 filter: Int16(EVFILT_READ),
-                                flags: UInt16(EV_DELETE),
+                                flags: UInt16(EV_DELETE | EV_DISABLE | EV_RECEIPT),
                                 fflags: 0,
                                 data: 0,
                                 udata: nil)
+                count -= 1
+                
                 changes.append(k)
             }
         }
@@ -225,10 +240,11 @@ internal struct __sxqueue_wrap {
     
     // Helper
     extension SXKernel {
-        func withMutex(_ execute: () -> ()) {
+        func withMutex<Result>(_ execute: () -> Result) -> Result {
             pthread_mutex_lock(&mutex)
-            execute()
+            let r = execute()
             pthread_mutex_unlock(&mutex)
+            return r
         }
     }
 #endif

@@ -29,13 +29,16 @@ public extension DataReader {
     }
     
     public mutating func rangeOfNextSegmentOfData(separatedBy bytes: Data) -> Range<Data.Index>? {
+        
         guard let endpoint = origin.findBytes(bytes: bytes,
                                               offset: currentOffset,
                                               len: bytes.count) else {
                                                 return nil
         }
+
         let begin = origin.index(origin.startIndex, offsetBy: currentOffset)
         let end = origin.index(begin, offsetBy: endpoint - currentOffset)
+        
         currentOffset = endpoint + bytes.count
         return Range(begin ..< end)
     }

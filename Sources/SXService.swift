@@ -114,7 +114,7 @@ public extension SXServerSocket {
         return try self._accept(self)
     }
     
-    public func runloop() {
+    public func runloop(kdata: Int, udata: UnsafeRawPointer!) {
         do {
             
             let client = try self.accept()
@@ -154,14 +154,12 @@ public extension SXServerSocket {
                     
                     let len = recv(client.sockfd, &buffer, size, flags)
                     
-                    if len == -1 {
+                    if len == 0 {
                         return nil
                     }
                     
-                    print(len)
-                    
-                    if len == 0 {
-                        return nil
+                    if len == -1 {
+                        throw SXSocketError.recv(String.errno)
                     }
                     
                     return Data(bytes: buffer, count: len)
